@@ -113,9 +113,16 @@
         <pre class="mono" id="ocr-text">识别结果会显示在这里……</pre>
       </div>
       <div>
-        <label>提取字段 (AI extraction)</label>
-        <div class="out" id="ocr-out"><div class="ph">上传单据后,供应商 / 日期 / 金额 / GST 等字段会自动抽取出来。</div></div>
+        <label>提取字段 + 自动归类 (AI extraction & categorisation)</label>
+        <div class="out" id="ocr-out"><div class="ph">上传单据后,自动抽取字段、归到正确费用科目,并累加进下方汇总。</div></div>
       </div>
+    </div>
+    <div id="ocr-sumwrap" style="display:none;margin-top:22px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label style="margin:0">费用汇总 Expense summary <span style="font-weight:400;text-transform:none;color:var(--mut)">— 上传多张收据自动累加</span></label>
+        <button class="btn ghost sm" onclick="clearReceipts()">清空</button>
+      </div>
+      <div id="ocr-sum"></div>
     </div>
   </div>
 
@@ -256,10 +263,40 @@ async function handleOCR(f){
   $('ocr-out').innerHTML='<div style="font-size:13px;margin-bottom:8px">🔍 <b>AI 从单据抽取的字段:</b></div><div class="exgrid" id="ocr-ex"></div>';
   const ex=$('ocr-ex');
   fields.forEach((fd,i)=>setTimeout(()=>{const d=document.createElement('div');d.className='exf';d.innerHTML='<span class="exk">'+fd[0]+'</span><span class="exv">'+fd[1]+'</span><span class="exc">✓</span>';ex.appendChild(d);},i*120));
-  setTimeout(()=>setBar(null),600);
+  setTimeout(()=>{
+    const c=addReceipt(p);
+    const d=document.createElement('div');d.className='kv';d.style.marginTop='12px';d.style.borderLeft='3px solid var(--grn)';
+    d.innerHTML='🏷️ <b>自动归类:</b> <span class="badge b-nav">'+c.cat+'</span> · 科目 '+c.code+' · GST '+c.gst+'<br><span style="color:var(--mut);font-size:12px">已加入下方费用汇总(第 '+RECEIPTS.length+' 张)。</span>';
+    $('ocr-out').appendChild(d);setBar(null);
+  },fields.length*120+250);
+}
+/* ---- categorise receipt + running expense summary ---- */
+const RECEIPTS=[];
+function catReceipt(supplier){const t=(supplier||'').toLowerCase();const hit=NLP.find(r=>r[0].test(t));return hit?{cat:hit[1],code:hit[2],gst:hit[3]}:{cat:'其他支出 (Other)',code:'6900',gst:'按性质判断'};}
+function addReceipt(p){const c=catReceipt(p.supplier);const total=(p.total!=null)?p.total:((p.net||0)+(p.gst||0));
+  RECEIPTS.push({date:p.date||'—',supplier:p.supplier||'(未识别)',cat:c.cat,code:c.code,net:p.net||0,gst:p.gst||0,total});renderSummary();return c;}
+function clearReceipts(){RECEIPTS.length=0;renderSummary();}
+function renderSummary(){
+  const wrap=$('ocr-sumwrap'),el=$('ocr-sum');
+  if(!RECEIPTS.length){wrap.style.display='none';return;}wrap.style.display='block';
+  const byCat={};let tn=0,tg=0,tt=0;
+  RECEIPTS.forEach(r=>{const b=byCat[r.cat]=byCat[r.cat]||{n:0,total:0};b.n++;b.total+=r.total;tn+=r.net;tg+=r.gst;tt+=r.total;});
+  const rows=RECEIPTS.map((r,i)=>`<tr><td>${i+1}</td><td>${r.date}</td><td>${r.supplier}</td><td><span class="badge b-nav">${r.cat}</span></td><td class="num">${money(r.net)}</td><td class="num">${money(r.gst)}</td><td class="num">${money(r.total)}</td></tr>`).join('');
+  const cats=Object.entries(byCat).sort((a,b)=>b[1].total-a[1].total).map(([k,v])=>`<tr><td>${k}</td><td class="num">${v.n}</td><td class="num">${money(v.total)}</td></tr>`).join('');
+  el.innerHTML=`
+    <div style="overflow:auto"><table>
+      <tr><th>#</th><th>日期</th><th>供应商</th><th>费用科目</th><th class="num">净额</th><th class="num">GST</th><th class="num">总额</th></tr>
+      ${rows}
+      <tr style="font-weight:700;background:var(--plane)"><td colspan="4">合计 Total(${RECEIPTS.length} 张)</td><td class="num">${money(tn)}</td><td class="num">${money(tg)}</td><td class="num">${money(tt)}</td></tr>
+    </table></div>
+    <div style="margin-top:12px;font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.04em">按类别小计 By category</div>
+    <table style="margin-top:4px"><tr><th>费用科目</th><th class="num">张数</th><th class="num">金额</th></tr>${cats}</table>`;
 }
 /* ---------- 2. NLP ---------- */
 const NLP=[
+  [/tech supplies|laptop|computer|notebook|hardware|electronic|printer|monitor|电脑|设备/i,'办公设备 (Office equipment)','1500 / 6300','进项税可claim(逾 SGD 5,000 资本化)','识别为电脑/办公设备。'],
+  [/petrol|shell|esso|caltex|spc|加油|油站/i,'车辆油费 (Vehicle & fuel)','6710','进项税一般受限(私家车)','识别为加油。'],
+  [/parking|carpark|erp|停车|泊车/i,'停车通行 (Parking & tolls)','6700','进项税可claim','识别为停车/通行费。'],
   [/starbucks|coffee|cafe|restaurant|foodpanda|deliveroo|kopitiam|食阁|餐/i,'员工餐饮 / 娱乐 (Staff meals & entertainment)','6710','进项税一般不可claim(娱乐招待受限)','把商户名识别为餐饮场所 → 归员工福利/招待。'],
   [/grab|taxi|comfort|gojek|mrt|bus|transport|flight|airline|hotel|差旅/i,'差旅交通 (Travel & transport)','6700','标准税率进项可claim','识别为交通/出行服务。'],
   [/aws|azure|google cloud|microsoft|adobe|zoom|slack|saas|subscription|software|订阅/i,'软件订阅 (Software & IT)','6600','进项税可claim','识别为云/软件订阅服务。'],
