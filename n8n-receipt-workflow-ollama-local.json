@@ -1,0 +1,161 @@
+{
+  "name": "Receipt OCR (fully local · Ollama)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "receipt-ocr",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "node-webhook",
+      "name": "Receipt Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        300
+      ],
+      "webhookId": "receipt-ocr-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "image",
+              "value": "={{ $json.body.image }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "system",
+              "value": "You are an expert Singapore bookkeeper working for an accounting firm.\nYou receive an image of a supplier invoice or receipt. Read it and categorise the expense into the firm's chart of accounts.\n\nReturn ONLY a valid JSON object (no markdown, no commentary) with these keys:\n- supplier: string — the vendor/merchant name\n- invoice_no: string or null — invoice/receipt number\n- date: string — the document date as printed (e.g. \"12 Jun 2026\")\n- currency: string — default \"SGD\"\n- net: number — amount before GST (no symbols, no thousands separators)\n- gst: number — GST/tax amount (0 if none). Singapore GST is 9%.\n- total: number — grand total\n- category: string — EXACTLY one label from the list below (keep the Chinese + English)\n- account_code: string — the matching code from the list\n- gst_claimable: string — short note on input-tax claimability\n- confidence: number — 0 to 1, your confidence in the extraction\n\nChart of accounts (pick exactly one category):\n- 办公设备 (Office equipment) | 1500 / 6300 | computers, laptops, notebooks, hardware, printers, monitors, electronics\n- 办公用品 (Office supplies) | 6820 | stationery, paper, consumables\n- 软件订阅 (Software & subscriptions) | 6830 | SaaS, cloud, licences, domains\n- 车辆油费 (Vehicle & fuel) | 6710 | petrol (Shell, Esso, Caltex, SPC)\n- 停车通行 (Parking & tolls) | 6700 | parking, carpark, ERP, season parking\n- 员工餐饮 / 娱乐 (Staff meals & entertainment) | 6740 | restaurants, cafes, catering, coffee (input tax generally BLOCKED)\n- 差旅交通 (Travel & transport) | 6720 | taxi, Grab, flights, hotels, transport\n- 通讯 (Telecom & internet) | 6760 | mobile, broadband, data plans\n- 水电杂费 (Utilities) | 6770 | electricity, water, gas\n- 租金 (Rent) | 6600 | office / premises rent\n- 专业服务 (Professional fees) | 6400 | legal, audit, consulting, accounting\n- 市场营销 (Marketing & advertising) | 6500 | ads, promotion, printing of marketing\n- 其他支出 (Other) | 6900 | anything that does not fit above\n\nRules:\n- Amounts must be numeric only (strip \"$\", \"SGD\", commas).\n- If GST is shown, put it in \"gst\"; if the receipt is GST-inclusive with no split, estimate net = total / 1.09 and gst = total - net (only if a GST reg no. is present).\n- If a field is unreadable use null, or 0 for amounts.\n- Choose exactly one category. Never invent a category outside the list.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "node-set",
+      "name": "Build Request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:11434/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"llama3.2-vision\", stream: false, temperature: 0, response_format: { type: \"json_object\" }, messages: [ { role: \"system\", content: $json.system }, { role: \"user\", content: [ { type: \"text\", text: \"Read this receipt/invoice image and return the JSON described in the system message.\" }, { type: \"image_url\", image_url: { url: $json.image } } ] } ] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-llm",
+      "name": "Local LLM (Ollama vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nlet content = res.choices && res.choices[0] && res.choices[0].message ? res.choices[0].message.content : (res.message ? res.message.content : '{}');\nlet data;\ntry { data = JSON.parse(content); }\ncatch (e) { const m = String(content).match(/\\{[\\s\\S]*\\}/); data = m ? JSON.parse(m[0]) : { error: 'parse_failed', raw: content }; }\n['net','gst','total'].forEach(k => { if (typeof data[k] === 'string') data[k] = parseFloat(String(data[k]).replace(/[^0-9.\\-]/g,'')) || 0; });\nif (data.total == null && (data.net != null || data.gst != null)) data.total = (data.net || 0) + (data.gst || 0);\ndata.currency = data.currency || 'SGD';\nreturn [{ json: data }];"
+      },
+      "id": "node-parse",
+      "name": "Parse & Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Receipt Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Request": {
+      "main": [
+        [
+          {
+            "node": "Local LLM (Ollama vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local LLM (Ollama vision)": {
+      "main": [
+        [
+          {
+            "node": "Parse & Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Shape": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
