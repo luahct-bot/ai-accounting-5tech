@@ -407,7 +407,7 @@ function runFC(){
   $('fc-chart').innerHTML=svg;
   const endCash=cashF[cashF.length-1];const totRev=revF.reduce((a,b)=>a+b,0);
   const growth=((fr(n+H-1)/rev[n-1]-1)*100);
-  $('fc-cash').innerHTML=`<b>现金流:</b>按当前趋势,未来 ${H} 个月末现金约 <b>SGD ${Math.round(endCash)}k</b>;期间营收合计约 SGD ${Math.round(totRev)}k,月增速约 ${((fr(n)/fr(n-1)-1)*100).toFixed(1)}%。`;
+  $('fc-cash').innerHTML=`<b>现金流:</b>按当前趋势,未来 ${H} 个月尾现金约 <b>SGD ${Math.round(endCash)}k</b>;期间营收合计约 SGD ${Math.round(totRev)}k,月增速约 ${((fr(n)/fr(n-1)-1)*100).toFixed(1)}%。`;
   const annualRev=totRev*(12/H);const est=Math.max(0,(totRev-expF.reduce((a,b)=>a+b,0)))*1000*0.17;
   $('fc-tax').innerHTML=`<b>税负预估:</b>按预测利润推算,期间应税利润约 SGD ${Math.round((totRev-expF.reduce((a,b)=>a+b,0)))}k,企业税(17%)约 <b>SGD ${Math.round(est).toLocaleString()}</b>(未计豁免/减免,示意)。`;
 }
