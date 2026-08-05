@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>收据 → n8n + LLM → 自动归类 · Receipt → n8n + LLM</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{--navy:#1F3A5F;--navy2:#2C5F82;--ink:#1A2430;--mut:#6B7A8A;--line:#D9E1EA;--tint:#EEF3F8;--green:#178A4C;--greenbg:#E4F5EA;--amber:#B7791F;--plane:#F5F8FB;--ice:#CADCFC;}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;color:var(--ink);background:#fff;line-height:1.5}
+.hd{background:var(--navy);color:#fff;padding:22px 26px}
+.hd h1{margin:0;font-size:20px}
+.hd p{margin:6px 0 0;font-size:13px;color:var(--ice)}
+.badge{display:inline-block;background:#2A4A6B;color:#fff;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;margin-left:8px;vertical-align:middle}
+.wrap{max-width:1080px;margin:0 auto;padding:22px}
+.card{border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:18px;background:#fff}
+label{font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:6px}
+input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit}
+.hint{font-size:11.5px;color:var(--mut);margin-top:6px}
+.drop{border:2px dashed var(--navy2);border-radius:12px;padding:34px;text-align:center;color:var(--navy2);cursor:pointer;background:var(--plane);transition:.15s}
+.drop:hover{background:#e9f0f7}
+.drop b{font-size:15px}
+.row{display:flex;gap:18px;flex-wrap:wrap}
+.col{flex:1;min-width:300px}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)}
+.btn.sm{padding:6px 11px;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px}
+th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px;font-weight:700}
+td{padding:8px 10px;border-bottom:1px solid var(--line)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.chip{display:inline-block;background:var(--tint);color:var(--navy);font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:6px}
+.kv{background:var(--greenbg);border-radius:8px;padding:12px 14px;font-size:13px;margin-top:10px}
+.err{background:#FBEAEA;color:#9B2C2C;border-radius:8px;padding:12px 14px;font-size:12.5px;margin-top:10px;white-space:pre-wrap}
+.status{font-size:12.5px;color:var(--mut);margin-top:10px;min-height:18px}
+.foot{font-size:11.5px;color:var(--mut);text-align:center;padding:16px 22px 40px;line-height:1.7}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px}
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>收据 → n8n + LLM → 自动归类 <span class="badge">真实生产版 · REAL n8n + LLM</span></h1>
+  <p>上传一张收据 → 你的 n8n 工作流调用 LLM 读字段 + 判费用科目 → 返回并累加进汇总。Receipt → your n8n workflow calls an LLM → categorised → running summary.</p>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <label>① 你的 n8n Webhook URL</label>
+    <input id="hook" type="text" placeholder="https://your-instance.app.n8n.cloud/webhook/receipt-ocr">
+    <div class="hint">在 n8n 打开 <b>Receipt Webhook</b> 节点 → 复制 <b>Production URL</b>(或测试时用 Test URL,并先点 “Execute workflow”)。粘贴到这里。URL 只存在本页面,不外传。</div>
+  </div>
+
+  <div class="row">
+    <div class="col card">
+      <label>② 上传收据(图片 / PDF)</label>
+      <div class="drop" id="drop">📄 <b>拖入 或 点击选择</b> 收据图片 / PDF<br><span class="hint">JPG · PNG · PDF(PDF 取第一页转图片)</span></div>
+      <input id="file" type="file" accept="image/*,application/pdf" style="display:none">
+      <div class="status" id="status"></div>
+      <div id="result"></div>
+    </div>
+    <div class="col card">
+      <label>③ 费用汇总 Expense summary <span style="float:right"><button class="btn ghost sm" onclick="clearAll()">清空</button></span></label>
+      <div id="sum"><div class="hint">上传收据后,这里会累加显示。</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="foot">
+  <span class="dot"></span><b>这是真实生产版:</b>OCR + 归类由你的 n8n 工作流中的 LLM(GPT-4o-mini)完成,不是浏览器模拟。<br>
+  可在 n8n 中一键切换到 Anthropic Claude / Google Gemini,或启用 “Append to Ledger” 节点写入 Google Sheet。数字准确率、时间为示意。
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const $=id=>document.getElementById(id);
+const RECEIPTS=[];
+const drop=$('drop'), file=$('file');
+drop.onclick=()=>file.click();
+drop.ondragover=e=>{e.preventDefault();drop.style.background='#e0eaf5'};
+drop.ondragleave=()=>drop.style.background='';
+drop.ondrop=e=>{e.preventDefault();drop.style.background='';if(e.dataTransfer.files[0])handle(e.dataTransfer.files[0])};
+file.onchange=e=>{if(e.target.files[0])handle(e.target.files[0])};
+
+function money(n){n=Number(n)||0;return 'SGD '+n.toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+async function toDataURL(f){
+  if(f.type==='application/pdf'){
+    const buf=await f.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const page=await pdf.getPage(1);
+    const vp=page.getViewport({scale:2});
+    const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+    await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+    return c.toDataURL('image/jpeg',0.9);
+  }
+  return await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});
+}
+
+async function handle(f){
+  const hook=$('hook').value.trim();
+  $('result').innerHTML='';
+  if(!hook){$('status').innerHTML='<span class="err">请先在上面填入你的 n8n Webhook URL。</span>';return;}
+  $('status').textContent='① 处理图片…';
+  let img;
+  try{img=await toDataURL(f);}catch(e){$('status').innerHTML='<span class="err">读取文件失败:'+e.message+'</span>';return;}
+  $('status').textContent='② 发送到 n8n → LLM 读取 + 归类中…(首次可能需数秒)';
+  let data;
+  try{
+    const resp=await fetch(hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:img,filename:f.name})});
+    const text=await resp.text();
+    if(!resp.ok){throw new Error('n8n 返回 HTTP '+resp.status+'\n'+text.slice(0,300));}
+    try{data=JSON.parse(text);}catch(e){throw new Error('返回不是 JSON(可能是 CORS 或工作流未接 Respond 节点):\n'+text.slice(0,300));}
+  }catch(e){
+    $('status').textContent='';
+    $('result').innerHTML='<div class="err"><b>调用失败</b>\n'+e.message+'\n\n排查:①URL 是否正确、工作流是否 Active;②Webhook 节点 CORS 允许来源设为 *;③OpenAI 凭证是否已配。</div>';
+    return;
+  }
+  $('status').innerHTML='<span class="dot"></span>完成:LLM 已读取并归类。';
+  showResult(data);
+  addReceipt(data);
+}
+
+function showResult(d){
+  const g=(k)=>d[k]==null||d[k]===''?'—':d[k];
+  $('result').innerHTML=
+   '<div class="kv"><b>🏷️ '+(g('category'))+'</b> · 科目 '+g('account_code')+
+   '<br>供应商 '+g('supplier')+' · 日期 '+g('date')+' · 发票号 '+g('invoice_no')+
+   '<br>净额 '+money(d.net)+' · GST '+money(d.gst)+' · 总额 '+money(d.total)+
+   '<br><span class="hint">进项税:'+g('gst_claimable')+(d.confidence!=null?' · 置信度 '+Math.round(d.confidence*100)+'%':'')+'</span></div>';
+}
+
+function addReceipt(d){
+  const total=(d.total!=null)?Number(d.total):((Number(d.net)||0)+(Number(d.gst)||0));
+  RECEIPTS.push({date:d.date||'—',supplier:d.supplier||'(未识别)',cat:d.category||'其他支出 (Other)',code:d.account_code||'6900',net:Number(d.net)||0,gst:Number(d.gst)||0,total});
+  renderSummary();
+}
+function clearAll(){RECEIPTS.length=0;renderSummary();$('result').innerHTML='';$('status').textContent='';}
+function renderSummary(){
+  const el=$('sum');
+  if(!RECEIPTS.length){el.innerHTML='<div class="hint">上传收据后,这里会累加显示。</div>';return;}
+  const byCat={};let tn=0,tg=0,tt=0;
+  RECEIPTS.forEach(r=>{const b=byCat[r.cat]=byCat[r.cat]||{n:0,total:0};b.n++;b.total+=r.total;tn+=r.net;tg+=r.gst;tt+=r.total;});
+  const rows=RECEIPTS.map((r,i)=>`<tr><td>${i+1}</td><td>${r.date}</td><td>${r.supplier}</td><td><span class="chip">${r.cat}</span></td><td class="num">${money(r.total)}</td></tr>`).join('');
+  const cats=Object.entries(byCat).sort((a,b)=>b[1].total-a[1].total).map(([k,v])=>`<tr><td>${k}</td><td class="num">${v.n}</td><td class="num">${money(v.total)}</td></tr>`).join('');
+  el.innerHTML=`<div style="overflow:auto"><table>
+    <tr><th>#</th><th>日期</th><th>供应商</th><th>费用科目</th><th class="num">总额</th></tr>${rows}
+    <tr style="font-weight:700;background:var(--plane)"><td colspan="4">合计 Total(${RECEIPTS.length} 张)· 净 ${money(tn)} · GST ${money(tg)}</td><td class="num">${money(tt)}</td></tr>
+    </table></div>
+    <div style="margin-top:12px;font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase">按类别小计 By category</div>
+    <table style="margin-top:4px"><tr><th>费用科目</th><th class="num">张数</th><th class="num">金额</th></tr>${cats}</table>`;
+}
+</script>
+</body>
+</html>
