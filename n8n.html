@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>收据 → n8n + LLM → 自动归类 · Receipt → n8n + LLM</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--navy:#1F3A5F;--navy2:#2C5F82;--ink:#1A2430;--mut:#6B7A8A;--line:#D9E1EA;--tint:#EEF3F8;--green:#178A4C;--greenbg:#E4F5EA;--amber:#B7791F;--plane:#F5F8FB;--ice:#CADCFC;}
 *{box-sizing:border-box}
@@ -60,7 +61,7 @@ td{padding:8px 10px;border-bottom:1px solid var(--line)}
       <div id="result"></div>
     </div>
     <div class="col card">
-      <label>③ 费用汇总 Expense summary <span style="float:right"><button class="btn ghost sm" onclick="clearAll()">清空</button></span></label>
+      <label>③ 费用汇总 Expense summary <span style="float:right"><button class="btn sm" onclick="exportExcel()">⬇ 下载 Excel</button> <button class="btn ghost sm" onclick="clearAll()">清空</button></span></label>
       <div id="sum"><div class="hint">上传收据后,这里会累加显示。</div></div>
     </div>
   </div>
@@ -133,9 +134,9 @@ function showResult(d){
 function addReceipt(d){
   const total=(d.total!=null)?Number(d.total):((Number(d.net)||0)+(Number(d.gst)||0));
   RECEIPTS.push({date:d.date||'—',supplier:d.supplier||'(未识别)',cat:d.category||'其他支出 (Other)',code:d.account_code||'6900',net:Number(d.net)||0,gst:Number(d.gst)||0,total});
-  renderSummary();
+  renderSummary();saveReceipts();
 }
-function clearAll(){RECEIPTS.length=0;renderSummary();$('result').innerHTML='';$('status').textContent='';}
+function clearAll(){RECEIPTS.length=0;renderSummary();saveReceipts();$('result').innerHTML='';$('status').textContent='';}
 function renderSummary(){
   const el=$('sum');
   if(!RECEIPTS.length){el.innerHTML='<div class="hint">上传收据后,这里会累加显示。</div>';return;}
@@ -150,6 +151,22 @@ function renderSummary(){
     <div style="margin-top:12px;font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase">按类别小计 By category</div>
     <table style="margin-top:4px"><tr><th>费用科目</th><th class="num">张数</th><th class="num">金额</th></tr>${cats}</table>`;
 }
+
+function saveReceipts(){try{localStorage.setItem('receipts_v1',JSON.stringify(RECEIPTS));}catch(e){}}
+function exportExcel(){
+  if(!RECEIPTS.length){alert('还没有记录 No records yet');return;}
+  const rows=RECEIPTS.map((r,i)=>({'#':i+1,'日期 Date':r.date,'供应商 Supplier':r.supplier,'费用科目 Category':r.cat,'科目 Code':r.code,'净额 Net':Number(r.net)||0,'GST':Number(r.gst)||0,'总额 Total':Number(r.total)||0}));
+  const tn=RECEIPTS.reduce((s,r)=>s+(Number(r.net)||0),0),tg=RECEIPTS.reduce((s,r)=>s+(Number(r.gst)||0),0),tt=RECEIPTS.reduce((s,r)=>s+(Number(r.total)||0),0);
+  rows.push({});rows.push({'供应商 Supplier':'合计 TOTAL','净额 Net':tn,'GST':tg,'总额 Total':tt});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Receipts');
+  const byCat={};RECEIPTS.forEach(r=>{const b=byCat[r.cat]=byCat[r.cat]||{n:0,total:0};b.n++;b.total+=Number(r.total)||0;});
+  const catRows=Object.entries(byCat).map(([k,v])=>({'费用科目 Category':k,'张数 Count':v.n,'金额 Amount':v.total}));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(catRows),'By Category');
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  XLSX.writeFile(wb,'receipts_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.xlsx');
+}
+(function(){try{const v=localStorage.getItem('receipts_v1');if(v){JSON.parse(v).forEach(r=>RECEIPTS.push(r));renderSummary();}}catch(e){}})();
 </script>
 </body>
 </html>
